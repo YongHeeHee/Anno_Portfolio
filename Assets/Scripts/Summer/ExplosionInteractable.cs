@@ -3,7 +3,7 @@ using UnityEngine;
 
 [RequireComponent(typeof(Collider2D))]
 [RequireComponent(typeof(Rigidbody2D))]
-public class ExplosionInteractable : MonoBehaviour
+public class ExplosionInteractable : MonoBehaviour, IResettable
 {
     [Header("Physics")]
     [Tooltip("비행 중 적용되는 중력 배율")]
@@ -19,6 +19,8 @@ public class ExplosionInteractable : MonoBehaviour
     private Rigidbody2D rb;
     private float initialGravityScale;
     private bool isFlying;
+    private Vector3 initialPosition;
+    private Quaternion initialRotation;
 
     public bool IsFlying => isFlying;
 
@@ -28,6 +30,33 @@ public class ExplosionInteractable : MonoBehaviour
         initialGravityScale = rb.gravityScale;
         rb.constraints = RigidbodyConstraints2D.FreezeAll;
         gameObject.layer = groundLayerIndex;
+
+        initialPosition = transform.position;
+        initialRotation = transform.rotation;
+    }
+
+    private void Start()
+    {
+        if (CheckpointManager.Instance != null)
+            CheckpointManager.Instance.OnRespawn += ResetState;
+    }
+
+    private void OnDestroy()
+    {
+        if (CheckpointManager.Instance != null)
+            CheckpointManager.Instance.OnRespawn -= ResetState;
+    }
+
+    public void ResetState()
+    {
+        StopAllCoroutines();
+        transform.position = initialPosition;
+        transform.rotation = initialRotation;
+        rb.linearVelocity = Vector2.zero;
+        rb.angularVelocity = 0f;
+        rb.gravityScale = initialGravityScale;
+        rb.constraints = RigidbodyConstraints2D.FreezeAll;
+        isFlying = false;
     }
 
     public void Launch(Vector2 force)

@@ -44,7 +44,7 @@ public class AnchorController : MonoBehaviour
     {
         if (SkillManager.Instance == null || !SkillManager.Instance.IsActiveSkill(SeasonSkillType.Anchor))
         {
-            if (isAnchored) Deactivate();
+            if (isAnchored) DeactivateAnchor();
             return;
         }
 
@@ -56,7 +56,7 @@ public class AnchorController : MonoBehaviour
         }
         else if (isAnchored && Input.GetMouseButtonUp(1))
         {
-            Deactivate();
+            DeactivateAnchor();
         }
 
         if (isAnchored)
@@ -64,7 +64,7 @@ public class AnchorController : MonoBehaviour
             float mpCost = mpCostPerSecond * Time.deltaTime;
             if (player.CurrentMp < mpCost)
             {
-                Deactivate();
+                DeactivateAnchor();
                 return;
             }
 
@@ -92,7 +92,7 @@ public class AnchorController : MonoBehaviour
         }
     }
 
-    private void Deactivate()
+    public void DeactivateAnchor()
     {
         isAnchored = false;
 

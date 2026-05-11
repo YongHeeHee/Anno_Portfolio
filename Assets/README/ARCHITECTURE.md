@@ -240,7 +240,9 @@ SplineGrowthController (싱글톤, 씬에 하나 배치)
         1. GrowthInteractable 마우스 클릭
            → StartGrowth(origin)
            → HasSkill(Growth) 체크, MP > 0 체크
-           → SpriteShape Prefab Instantiate
+           → SpriteShape Prefab Instantiate (GetShape)
+             · SpriteShapeRenderer.SetLocalAABB로 큰 bounds 강제 지정
+               → 동적 spline의 stale LocalAABB 기반 frustum culling 방지
            → Spline 초기화 (origin에 첫 번째 포인트)
 
         2. 마우스 드래그 중 (Update)
@@ -447,10 +449,21 @@ GhostController (싱글톤, 씬에 하나 배치)
         → GhostController Inspector에서 ghostWallLayerIndex 설정
 ```
 
-## 봄 스킬 - VineGrapple (덩굴 이동)
+## 봄 스킬 - VineGrapple (덩굴 새총)
 
 ```
 스크립트 경로: Assets/Scripts/Spring/
+
+메카닉 개요:
+    *앵커 테더 + 새총 발사* 방식. 우클릭 hold로 앵커(VineLaunchInteractable)에
+    덩굴을 연결하고, 플레이어가 ground 위에서 자유롭게 이동해 줄을 늘린다(stretch).
+    우클릭 release 시 (앵커 - 플레이어) 방향으로 stretch × forcePerUnit 속도로 발사.
+    줄 자체에 길이 cap 없음 — 플레이어가 이동 가능한 ground 범위가 곧 stretch 한계.
+    레벨 디자인이 stretch 가능 거리를 통제: 좁은 발판 = 약한 발사, 넓은 발판 = 강한 발사.
+
+VineLaunchInteractable (앵커로 사용할 오브젝트에 부착)
+    RequireComponent: Collider2D
+    AnchorPosition 프로퍼티 → transform.position 반환
 
 VineGrappleController (싱글톤, 씬에 하나 배치)
     스킬 제한: SkillManager.IsActiveSkill(SeasonSkillType.VineGrapple)
@@ -458,34 +471,50 @@ VineGrappleController (싱글톤, 씬에 하나 배치)
     Inspector 설정:
     ┌─ References ──────────────────────────────────────────────────────┐
     │ player (PlayerBase)                    : MP 소모용 플레이어 참조  │
-    ├─ Grapple Settings ────────────────────────────────────────────────┤
-    │ grappleSpeed (float, 기본 15)          : 덩굴 당김 이동 속도     │
-    │ maxDistance (float, 기본 15)            : 레이캐스트 최대 거리    │
-    │ arrivalThreshold (float, 기본 0.5)     : 도착 판정 거리          │
-    │ grappleLayerMask (LayerMask)           : 부착 가능 레이어        │
+    ├─ Connection ──────────────────────────────────────────────────────┤
+    │ maxConnectDistance (float, 기본 8)     : 앵커 검색 최대 거리      │
+    │                                          (지상 7칸 / 점프 8칸 도달) │
+    │ aimRadius (float, 기본 0.5)            : CircleCast 조준 보정 반경│
+    │ raycastLayerMask (LayerMask)           : 앵커 + 시야 차단 레이어  │
+    ├─ Launch ──────────────────────────────────────────────────────────┤
+    │ forcePerUnit (float, 기본 4)           : 거리당 속도 (선형)      │
+    │ minStretchForLaunch (float, 기본 0.5)  : 이 미만이면 발사 안 됨  │
     ├─ MP ──────────────────────────────────────────────────────────────┤
-    │ mpCost (float, 기본 25)                : 1회 발사 고정 MP 비용   │
+    │ mpCost (float, 기본 25)                : 연결 순간 차감 MP 비용   │
     ├─ Visual ──────────────────────────────────────────────────────────┤
     │ lineRenderer (LineRenderer)            : 덩굴 시각화 컴포넌트    │
     └───────────────────────────────────────────────────────────────────┘
 
-    덩굴 발사 → 이동 흐름:
-        1. 우클릭 (Mouse Button 1)
-           → TryGrapple()
+    연결 → 발사 흐름:
+        1. 우클릭 Down (Mouse Button 1)
+           → TryConnect()
            → MP >= mpCost 확인 (부족하면 무시)
-           → 플레이어 → 마우스 방향 Physics2D.Raycast
-           → grappleLayerMask 히트 시: MP 차감, 덩굴 부착
+           → 플레이어 → 마우스 방향 Physics2D.CircleCast(aimRadius)
+           → raycastLayerMask 히트 시 VineLaunchInteractable 컴포넌트 확인
+           → 앵커가 아닌 콜라이더(Ground 등)에 차단되면 실패
+           → MP 차감, isTethered = true, LineRenderer 활성
 
-        2. 그래플 활성 중 (매 프레임 Update)
-           → 플레이어를 히트 포인트 방향으로 grappleSpeed로 이동
-           → player.MovementLocked = true (일반 이동 잠금)
-           → LineRenderer로 플레이어 ~ 히트 포인트 시각화
+        2. 테더 연결 중 (매 프레임 Update)
+           → 플레이어 일반 이동 가능 (MovementLocked 설정 없음)
+           → LineRenderer로 플레이어 ~ 앵커 시각화
+           → 줄 자체에 물리 제약 없음 — 길이는 플레이어 위치로만 결정
 
-        3. 도착 / 우클릭 재입력 / 스킬 전환
-           → ReleaseGrapple()
-           → MovementLocked = false
-           → velocity 감쇠 (0.3배) → 약간의 관성 유지
+        3. 우클릭 Up
+           → Disconnect(launch: true)
+           → stretch = Distance(player, anchor)
+           → stretch >= minStretchForLaunch이면:
+               launchDir = (앵커 - 플레이어).normalized
+               launchSpeed = stretch × forcePerUnit
+               player.ApplyLaunchVelocity(launchDir × launchSpeed)
            → LineRenderer 비활성화
+
+        4. 스킬 전환 시
+           → Disconnect(launch: false) → 발사 없이 단순 해제
+
+    PlayerBase.ApplyLaunchVelocity():
+        → rb.linearVelocity 덮어쓰기
+        → IsLaunched = true → 일정 시간 X 입력으로 인한 속도 덮어쓰기 차단(모멘텀 보존)
+        → 착지하거나 launchOverrideDuration 경과 시 자동 해제
 ```
 
 ## 여름 스킬 - Ignite (점화 부스트)
@@ -689,8 +718,9 @@ GhostController ──→ SkillManager (IsActiveSkill 체크)
 GhostController ──→ PlayerBase (MP 소모, SpriteRenderer, CapsuleCollider2D)
 GhostController ──→ Physics2D (IgnoreLayerCollision, OverlapCapsule)
 VineGrappleController ──→ SkillManager (IsActiveSkill 체크)
-VineGrappleController ──→ PlayerBase (MP 소모, MovementLocked, Rigidbody2D)
-VineGrappleController ──→ Physics2D (Raycast)
+VineGrappleController ──→ PlayerBase (MP 소모, ApplyLaunchVelocity, Rigidbody2D)
+VineGrappleController ──→ VineLaunchInteractable (앵커 검출, AnchorPosition 조회)
+VineGrappleController ──→ Physics2D (CircleCast)
 IgniteController ──→ SkillManager (IsActiveSkill 체크)
 IgniteController ──→ PlayerBase (MP 소모, SpeedMultiplier, JumpMultiplier, SpriteRenderer)
 FreezeInteractable ──→ SkillManager (IsActiveSkill 체크)

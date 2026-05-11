@@ -92,7 +92,7 @@ public class GhostController : MonoBehaviour
         Physics2D.IgnoreLayerCollision(playerLayerIndex, ghostWallLayerIndex, true);
     }
 
-    private void DeactivateGhost()
+    public void DeactivateGhost()
     {
         isGhostActive = false;
 

@@ -71,6 +71,12 @@ void Awake()
 - 기능별 하위 폴더 분류
   - `Scripts/Camera/` - 카메라 관련
   - `Scripts/Dialogue/` - 대화 시스템
+  - `Scripts/Spring/` - 봄 스킬 (Growth, VineGrapple)
+  - `Scripts/Summer/` - 여름 스킬 (Explosion, Ignite)
+  - `Scripts/Autumn/` - 가을 스킬 (Lighten, Ghost)
+  - `Scripts/Winter/` - 겨울 스킬 (Freeze, Anchor)
+  - `Scripts/UI/` - UI 관련
+  - `Scripts/Debug/` - 디버그/테스트용 도구
   - `Scripts/Editor/` - 에디터 전용 도구
 - 캐릭터 관련 기본 스크립트는 `Scripts/` 루트에 배치
 

@@ -18,8 +18,8 @@ public class FreezeInteractable : MonoBehaviour
     [SerializeField] private float maxBlinkInterval = 0.4f;
 
     private Rigidbody2D rb;
-    private SpriteRenderer spriteRenderer;
-    private Color originalColor;
+    private SpriteRenderer[] spriteRenderers;
+    private Color[] originalColors;
     private float originalGravityScale;
     private RigidbodyConstraints2D originalConstraints;
     private bool isFrozen;
@@ -30,10 +30,24 @@ public class FreezeInteractable : MonoBehaviour
     private void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
-        spriteRenderer = GetComponent<SpriteRenderer>();
-        originalColor = spriteRenderer.color;
+        spriteRenderers = GetComponentsInChildren<SpriteRenderer>(true);
+        originalColors = new Color[spriteRenderers.Length];
+        for (int i = 0; i < spriteRenderers.Length; i++)
+            originalColors[i] = spriteRenderers[i].color;
         originalGravityScale = rb.gravityScale;
         originalConstraints = rb.constraints;
+    }
+
+    private void SetTint(Color c)
+    {
+        for (int i = 0; i < spriteRenderers.Length; i++)
+            spriteRenderers[i].color = c;
+    }
+
+    private void RestoreColors()
+    {
+        for (int i = 0; i < spriteRenderers.Length; i++)
+            spriteRenderers[i].color = originalColors[i];
     }
 
     private void OnMouseDown()
@@ -53,7 +67,7 @@ public class FreezeInteractable : MonoBehaviour
         rb.gravityScale = 0f;
         rb.constraints = RigidbodyConstraints2D.FreezeAll;
 
-        spriteRenderer.color = freezeTint;
+        SetTint(freezeTint);
 
         if (restoreCoroutine != null)
             StopCoroutine(restoreCoroutine);
@@ -74,7 +88,10 @@ public class FreezeInteractable : MonoBehaviour
             float interval = Mathf.Lerp(maxBlinkInterval, minBlinkInterval, progress);
 
             showOriginal = !showOriginal;
-            spriteRenderer.color = showOriginal ? originalColor : freezeTint;
+            if (showOriginal)
+                RestoreColors();
+            else
+                SetTint(freezeTint);
 
             yield return new WaitForSeconds(interval);
             elapsed += interval;
@@ -87,7 +104,7 @@ public class FreezeInteractable : MonoBehaviour
     {
         rb.gravityScale = originalGravityScale;
         rb.constraints = originalConstraints;
-        spriteRenderer.color = originalColor;
+        RestoreColors();
         isFrozen = false;
         restoreCoroutine = null;
     }

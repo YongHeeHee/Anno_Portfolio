@@ -88,7 +88,7 @@ public class IgniteController : MonoBehaviour
         }
     }
 
-    private void DeactivateIgnite()
+    public void DeactivateIgnite()
     {
         isIgnited = false;
 

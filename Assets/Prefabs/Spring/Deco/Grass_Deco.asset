@@ -1,0 +1,29 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3961fd5adc21277449f454e3ed611796, type: 3}
+  m_Name: Grass_Deco
+  m_EditorClassIdentifier: Assembly-CSharp::DecoScatterPreset
+  prefabs:
+  - prefab: {fileID: 5931947271125839943, guid: e51fbfb8fbec14a4baa21b93a597e179, type: 3}
+    weight: 1
+  - prefab: {fileID: 8293983452496605832, guid: 782fe41e59ded734b8ad1218b6895d12, type: 3}
+    weight: 1
+  - prefab: {fileID: 227265780061535164, guid: 21377ccdae135ab46a59c2fd4b4319dd, type: 3}
+    weight: 1
+  - prefab: {fileID: 4179084298126815134, guid: b8bdeb79dace1a446b725f33f21cc829, type: 3}
+    weight: 1
+  - prefab: {fileID: 8078268712136202112, guid: 8cb25091248453645b6f25bcf6188f08, type: 3}
+    weight: 1
+  density: 3
+  yJitter: 0
+  scaleVariance: 0.1
+  flipChance: 0.5

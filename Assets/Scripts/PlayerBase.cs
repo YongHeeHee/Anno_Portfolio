@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 
 [RequireComponent(typeof(Rigidbody2D))]
@@ -40,23 +41,47 @@ public abstract class PlayerBase : CharacterBase, IMovable
     [Tooltip("착지 판정 OverlapBox의 크기")]
     [SerializeField] private Vector2 groundCheckSize = new Vector2(0.6f, 0.1f);
 
+    [Header("Effects")]
+    [Tooltip("점프 시 발밑에 생성되는 이펙트 Prefab")]
+    [SerializeField] private GameObject jumpEffectPrefab;
+
+    [Tooltip("착지 시 발밑에 생성되는 이펙트 Prefab")]
+    [SerializeField] private GameObject landEffectPrefab;
+
+    [Tooltip("이펙트 생성 위치 오프셋 (캐릭터 발밑 기준)")]
+    [SerializeField] private Vector2 effectOffset = new Vector2(0f, -0.5f);
+
+    [Header("Death")]
+    [Tooltip("환경 위험 오브젝트에 부여하는 태그")]
+    [SerializeField] private string hazardTag = "Hazard";
+
+    [Tooltip("Death 애니메이션 재생 후 리스폰까지 대기 시간(초)")]
+    [SerializeField] private float respawnDelay = 1.2f;
+
     [Header("Rest")]
     [Tooltip("입력이 없을 때 휴식 애니메이션이 시작되기까지의 대기 시간(초)")]
     [SerializeField] private float restDelay = 5f;
+
+    [Header("Launch")]
+    [Tooltip("외부 발사(VineGrapple 슬링샷 등) 후 X 속도가 유지되는 최대 시간(초). 그 전에 착지하면 즉시 해제")]
+    [SerializeField] private float launchOverrideDuration = 3f;
 
     protected Rigidbody2D rb;
     protected Animator animator;
 
     public bool InputLocked { get; set; }
     public bool MovementLocked { get; set; }
+    public bool IsLaunched { get; private set; }
 
     protected float moveInput;
     private bool jumpRequested;
     private bool isGroundedField;
+    private bool wasGroundedLastFrame;
     private float idleTimer;
     private float mpRegenTimer;
     private float mpRegenDelayTimer;
     private float currentMp;
+    private float launchTimer;
 
     public float SpeedMultiplier { get; set; } = 1f;
     public float JumpMultiplier { get; set; } = 1f;
@@ -84,6 +109,7 @@ public abstract class PlayerBase : CharacterBase, IMovable
     protected static readonly int IsGroundedHash = Animator.StringToHash("IsGrounded");
     protected static readonly int RestHash = Animator.StringToHash("Rest");
     protected static readonly int DeathHash = Animator.StringToHash("Death");
+    protected static readonly int RespawnHash = Animator.StringToHash("Respawn");
 
     protected override void Awake()
     {
@@ -121,6 +147,17 @@ public abstract class PlayerBase : CharacterBase, IMovable
         animator.SetBool(RestHash, false);
     }
 
+    /// <summary>
+    /// 외부 발사 (VineGrapple 슬링샷 등). X 입력으로 인한 속도 덮어쓰기를 차단하여 모멘텀 보존.
+    /// 착지하거나 launchOverrideDuration 경과 시 자동 해제.
+    /// </summary>
+    public void ApplyLaunchVelocity(Vector2 velocity)
+    {
+        rb.linearVelocity = velocity;
+        IsLaunched = true;
+        launchTimer = launchOverrideDuration;
+    }
+
     // --- Unity Lifecycle ---
 
     private void Update()
@@ -156,6 +193,20 @@ public abstract class PlayerBase : CharacterBase, IMovable
             groundCheckSize, 0f, groundLayer);
         isGroundedField = groundCollider != null;
 
+        // 착지 감지: 공중 → 지면
+        bool justLanded = isGroundedField && !wasGroundedLastFrame;
+        if (justLanded)
+            SpawnEffect(landEffectPrefab);
+        wasGroundedLastFrame = isGroundedField;
+
+        // 발사 상태 갱신: 착지 또는 시간 초과 시 해제
+        if (IsLaunched)
+        {
+            launchTimer -= Time.fixedDeltaTime;
+            if (justLanded || launchTimer <= 0f)
+                IsLaunched = false;
+        }
+
         Vector2 platformVelocity = Vector2.zero;
         if (groundCollider != null && groundCollider.attachedRigidbody != null)
             platformVelocity = groundCollider.attachedRigidbody.linearVelocity;
@@ -166,12 +217,21 @@ public abstract class PlayerBase : CharacterBase, IMovable
             return;
         }
 
-        float speed = IsMovementBlocked() ? 0f : moveInput * moveSpeed * SpeedMultiplier;
-        rb.linearVelocity = new Vector2(speed + platformVelocity.x, rb.linearVelocity.y + platformVelocity.y);
+        if (IsLaunched)
+        {
+            // 발사 중: X 속도 보존 (입력 무시), 플랫폼 속도만 추가
+            rb.linearVelocity = new Vector2(rb.linearVelocity.x + platformVelocity.x, rb.linearVelocity.y + platformVelocity.y);
+        }
+        else
+        {
+            float speed = IsMovementBlocked() ? 0f : moveInput * moveSpeed * SpeedMultiplier;
+            rb.linearVelocity = new Vector2(speed + platformVelocity.x, rb.linearVelocity.y + platformVelocity.y);
+        }
 
         if (jumpRequested && isGroundedField)
         {
             rb.linearVelocity = new Vector2(rb.linearVelocity.x, jumpForce * JumpMultiplier);
+            SpawnEffect(jumpEffectPrefab);
         }
         jumpRequested = false;
     }
@@ -180,12 +240,50 @@ public abstract class PlayerBase : CharacterBase, IMovable
     {
         if (IsDead) return;
         IsDead = true;
+        InputLocked = true;
         animator.SetTrigger(DeathHash);
         rb.linearVelocity = Vector2.zero;
         rb.bodyType = RigidbodyType2D.Kinematic;
+
+        StartCoroutine(RespawnRoutine());
+    }
+
+    private void OnTriggerEnter2D(Collider2D other)
+    {
+        if (IsDead) return;
+        if (!string.IsNullOrEmpty(hazardTag) && other.CompareTag(hazardTag))
+            Die();
+    }
+
+    private IEnumerator RespawnRoutine()
+    {
+        yield return new WaitForSeconds(respawnDelay);
+
+        rb.bodyType = RigidbodyType2D.Dynamic;
+        rb.gravityScale = gravityScale;
+        rb.linearVelocity = Vector2.zero;
+
+        if (CheckpointManager.Instance != null)
+            CheckpointManager.Instance.RespawnPlayer(this);
+        else
+            CurrentMp = maxMp;
+
+        animator.ResetTrigger(DeathHash);
+        animator.SetTrigger(RespawnHash);
+        animator.Play("Idle", 0, 0f);
+
+        IsDead = false;
+        InputLocked = false;
     }
 
     // --- Internal ---
+
+    private void SpawnEffect(GameObject prefab)
+    {
+        if (prefab == null) return;
+        Vector3 pos = transform.position + (Vector3)effectOffset;
+        Destroy(Instantiate(prefab, pos, Quaternion.identity), 2f);
+    }
 
     private bool IsMovementBlocked() => MovementLocked || IsLocked();
 
@@ -233,4 +331,18 @@ public abstract class PlayerBase : CharacterBase, IMovable
     /// Subclass reads input and calls SetMoveInput() / RequestJump().
     /// </summary>
     protected abstract void ReadInput();
+
+    private void OnDrawGizmosSelected()
+    {
+        Vector3 center = transform.position + (Vector3)groundCheckOffset;
+        Vector3 size = new Vector3(groundCheckSize.x, groundCheckSize.y, 0f);
+
+        Gizmos.color = Application.isPlaying && isGroundedField
+            ? new Color(0f, 1f, 0f, 0.5f)
+            : new Color(1f, 0f, 0f, 0.5f);
+        Gizmos.DrawCube(center, size);
+
+        Gizmos.color = Application.isPlaying && isGroundedField ? Color.green : Color.red;
+        Gizmos.DrawWireCube(center, size);
+    }
 }

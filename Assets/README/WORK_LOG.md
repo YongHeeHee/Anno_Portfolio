@@ -5,6 +5,140 @@
 
 ---
 
+## 2026-05-07 | 낙사(worldspace Y) 사망 조건 제거 → Hazard 단일화
+
+### 배경
+- `PlayerBase.Update()`의 `transform.position.y < minYThreshold` (기본 -50) 분기로 낙사 처리 중이었음
+- 시즌 씬은 GameScene 위에 Additive 로드되는 구조라 시즌 맵을 어느 월드 Y에 배치하느냐에 따라 임계값 의미가 달라져 사고 위험 (예: 시즌 맵을 Y=-50 아래에 두면 시작과 동시에 즉사)
+- Hazard 태그 Tilemap 접촉 사망은 이미 `OnTriggerEnter2D`에서 동작 중이고, SpringScene에 Hazard 타일맵도 배치되어 있음
+
+### 변경
+- **PlayerBase.cs**:
+  - `minYThreshold` SerializeField 제거
+  - `Update()`의 Y값 체크 분기 제거
+- **GAME_DESIGN.md 섹션 14**:
+  - 사망 원인 표에서 "낙사" 행 제거
+  - 환경 위험 항목에 "절벽/구덩이 바닥에도 Hazard 타일을 깔아 추락 사망을 표현"이라는 룰 명문화
+  - 사망 연출 본문에서 "낙사/환경 위험 접촉" → "환경 위험 접촉"으로 단일화
+
+### 보존
+- KillZone 컴포넌트(Scripts/Checkpoint/KillZone.cs)는 박스형 사망구역 보조 도구로 유지. Hazard 타일맵으로 표현하기 어려운 영역(이동 플랫폼에 붙은 가시 등)에 사용 가능
+
+### 영향 / 디자인 룰
+- 시즌 씬 제작 시 절벽·구덩이·맵 외곽에는 반드시 Hazard 타일맵을 깔아야 한다. 빈 공간으로 두면 플레이어가 무한 추락한다
+
+---
+
+## 2026-05-05 | VineGrapple 도달 거리 디자인 기준 확정 — 지상 7칸 / 점프 8칸
+
+### 배경
+- 새총 메카닉으로 전환된 뒤 *앵커 배치 거리* 가 레벨 디자인 가이드로 명문화돼 있지 않아 봄 T2 이후 스테이지에서 일관성이 부족했음
+
+### 결정
+- 플레이어가 밟고 있는 타일 기준 **앵커 배치 상한**:
+  - **점프 없이(지상): 최대 7칸**
+  - **점프 시: 최대 8칸**
+- `maxConnectDistance` 기본값 `6` → `8` 로 상향 (지상 7칸, 점프 8칸 도달을 코드 측에서 보장)
+- GameScene `VineGrappleController.maxConnectDistance` 도 6 → 8 로 동기화
+
+### 적용 범위
+- PLAYER_STATS.md: VineGrapple 표 업데이트 + 앵커 배치 규칙 표 추가
+- ARCHITECTURE.md: VineGrappleController 인스펙터 표 갱신
+- VineGrappleController.cs / GameScene.unity: 인스펙터 기본값 동기화
+- 봄 시즌 스테이지(T1~) 데코/맵 제작 시 위 규칙을 따라 앵커를 배치
+
+---
+
+## 2026-05-05 | VineGrapple 메커니즘 전환 — Raycast 당김 → 앵커 테더 + 새총 발사
+
+### 변경 배경
+- 기존 메커니즘(우클릭 시 마우스 방향 Raycast → 히트 지점으로 일정 속도 당김)은 도달 거리/방향이 한 번에 결정되어 레벨 디자인 자유도가 낮음
+- DistanceJoint2D `maxStretch`로 줄 길이 제약을 두는 방식도 시도했으나, 앵커가 플레이어보다 위에 있을 때 줄 한계 도달 시 *플레이어가 공중으로 들어올려지는* 부작용 발생
+
+### 신규 메커니즘 (VineGrappleController.cs 재작성)
+- **VineLaunchInteractable**: 앵커로 사용할 오브젝트에 부착하는 단순 컴포넌트. `AnchorPosition` 프로퍼티만 노출
+- **TryConnect()**: 우클릭 Down → CircleCast(`aimRadius=0.5`)로 마우스 방향 앵커 검색. `raycastLayerMask`에 앵커 + 차단용 Ground 레이어 포함 → Ground에 막히면 연결 실패. 연결 시 즉시 mpCost 차감
+- **연결 중**: 일반 이동 잠금 안 함 — 플레이어가 ground 위에서 자유롭게 이동해 줄을 늘림(stretch). 줄 자체에 길이 cap 없음
+- **Disconnect(launch:true)**: 우클릭 Up → `stretch × forcePerUnit` 속도로 (앵커 - 플레이어) 방향 발사. `minStretchForLaunch=0.5` 미만이면 발사 없음
+- **PlayerBase.ApplyLaunchVelocity()** 신규: 발사 속도 적용 + `IsLaunched` 플래그로 X 입력에 의한 속도 덮어쓰기 차단(모멘텀 보존). 착지하거나 `launchOverrideDuration` 경과 시 자동 해제
+
+### 레벨 디자인 원칙
+- 줄 길이 제한이 없으므로 *앵커-플레이어 사이 ground 길이*가 곧 stretch 한계 → 발판 길이로 발사 도달 거리 통제
+- 수직 도달: stretch 3칸 → 약 2.5칸(일반 점프 수준), 5칸 → 약 6.8칸, 6칸 → 약 9.8칸 (gravityScale=3, forcePerUnit=4 기준)
+- 좁은 발판 = 약한 도약, 넓은 발판 = 강한 도약. 절벽으로 추가 stretch 차단 가능
+
+---
+
+## 2026-05-01 ~ 2026-05-05 | SpringScene 스테이지 구현 (T1 → T2)
+
+### 씬 구조 정착
+- 시즌 씬은 **Player·매니저 없이 맵 데이터만** 보유. GameScene을 베이스로 두고 시즌 씬을 Additive 로드
+- 단일 Grid 하위에 스테이지별 Tilemap 그룹(`Stage_T1`, `Stage_T2`, ...). 각 스테이지마다 `Ground_XX`(CompositeCollider2D), `Hazard_XX`(TilemapCollider2D, Trigger)
+- 평균 5만 타일 규모에서 단일 Tilemap+Composite는 편집 시 0.5~2초 멈춤 → 스테이지 분할로 편집 중인 Composite만 재계산되도록 함
+
+### 데코 배치 시스템 (DecoScatter)
+- 잔디·돌 등 **다량의 작은 데코는 절차적 산포**: `DecoScatter` 컴포넌트(빈 GameObject) + `DecoScatterPreset`(SO, 프리팹 가중치/density/yJitter/scaleVariance/flipChance)
+- 나무·집·큰 바위 등 **크고 단독 데코는 GameObject 직접 배치**
+- Tilemap 데코 레이어는 사용 안 함 — 스프라이트 크기 편차(32x25/18x16/56x90 등)가 고정 셀 그리드와 안 맞아서 폐기
+- 모든 데코는 콜라이더 없음. 상호작용 환경 오브젝트는 별도로 분류
+
+### 체크포인트 / KillZone 시스템
+- `IResettable` 인터페이스 + `CheckpointManager`(싱글톤) + `CheckpointTrigger` + `KillZone`
+- KillZone 진입 시 마지막 체크포인트로 리스폰
+- 시즌 씬 안에 트리거 배치, 매니저는 GameScene에 영구 보유
+
+### 카메라 - ParallaxBackground
+- 카메라 위치 기반 배경 시차 스크롤 컴포넌트 추가
+
+---
+
+## 2026-04-21 | Growth 스킬 - SpriteShape 렌더링 누락 버그 수정
+
+### 증상
+- `GrowthInteratable_Pot`을 씬에 여러 개 배치하고 Growth 스킬을 연속 사용하면 n번째(2번째 이후) 덩굴에서 **EdgeCollider2D는 정상 생성되지만 SpriteShape sprite가 렌더링되지 않음**
+- 플레이어는 보이지 않는 덩굴을 밟고 이동 가능 → 체감 무결성 손상
+- **Game 창 크기에 따라 증상이 달라짐**: 전체 화면일 때 안 보이고, 창을 축소하면 보임 → Frustum Culling 이슈로 확정
+
+### 원인
+- `VinePrefab`의 `SpriteShapeRenderer`에 **stale LocalAABB**(center:(0, 0.25), extent:(1, 0.75))가 캐시되어 있음
+- `Instantiate` 후 `transform.position = Vector3.zero`로 둔 채 origin 좌표에 spline 포인트를 꽂아 실제 mesh는 local (origin, ...) 위치에 생성되지만, 카메라는 캐시된 AABB (-1~1, -0.5~1) 기준으로 frustum culling 판정
+- 실제 mesh가 stale AABB 밖에 있으면 `SpriteShapeRenderer`가 렌더링 스킵 → sprite 미표시
+- Game 창 크기(카메라 aspect ratio)에 따라 frustum이 달라져 재현/미재현이 불안정하게 관측됨
+
+### 수정 (SplineGrowthController.cs)
+- `GetShape()`: Instantiate 직후 `SpriteShapeRenderer.SetLocalAABB(new Bounds(Vector3.zero, Vector3.one * 10000f))` 호출로 동적 스플라인용 frustum culling 무력화
+- `AddSplinePoint()`: `BakeMesh()`가 AABB를 mesh geometry 기준으로 재계산하므로, BakeMesh 직후에도 동일한 override 재적용
+- 일반적인 게임 해상도(orthographicSize ≤ 20, aspect ≤ 21:9) 수평 extent 대비 충분히 큰 bounds라 모든 해상도에서 안전
+
+### 교훈
+- 동적으로 성장/축소하는 SpriteShape는 prefab에 캐시된 LocalAABB가 실제 mesh 위치를 따라오지 못함
+- `BakeMesh()`는 AABB를 재계산하지만 그 값이 여전히 stale할 수 있음 → frustum culling 회피용 큰 AABB override가 표준 우회책
+- 렌더링 버그인데 Collider는 스크립트가 직접 주입해서 항상 정상이라 "Collider만 있고 Sprite 없음" 증상이 나타남
+
+---
+
+## 2026-04-19 | [구상 중] Sprite Shape Spline → 타일맵 수동 배치 전환 검토
+
+### 배경
+- 현재 지형/배경 일부를 Sprite Shape Profile + Spline으로 그리고 있음
+- 픽셀 아트 기반(PPU 32) 프로젝트인데 spline 곡선 구간에서 픽셀이 늘어지고 깨지는 현상 발생
+- Adaptive Tile, Mesh Type, Pixel Perfect Camera 등 설정으로 일부 완화는 가능하나 곡선 보간 자체가 픽셀 무결성과 충돌
+
+### 검토 방향
+- **Sprite Shape 유지 케이스**: 직선 위주 구간, 길이 변동이 잦은 임시 지형
+  - Tangent Mode를 Linear 고정, Adaptive Tile 해제로 깨짐 최소화
+- **타일맵 수동 배치 전환 케이스**: 최종 스테이지 지형, 픽셀 정렬이 중요한 배경
+  - Tile Palette 기반으로 32px 그리드에 스냅된 배치
+  - 곡선/경사 표현은 미리 만든 코너/슬로프 타일 세트로 대응
+- 두 방식 혼용 가능성 검토 (가시성 큰 전경은 타일맵, 멀리 보이는 실루엣은 Sprite Shape)
+
+### 결정 필요 항목
+- 어떤 씬/구간을 어느 방식으로 갈지 분류 기준
+- 타일맵 전환 시 필요한 추가 타일 에셋 목록 (코너, 슬로프, 가장자리 변형)
+- 기존 Spring/Game 씬에 적용된 Sprite Shape 마이그레이션 범위
+
+---
+
 ## 2026-03-30 | 겨울 스킬 구현 - Freeze + Anchor
 
 ### SeasonSkillType enum 변경
